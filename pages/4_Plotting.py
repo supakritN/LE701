@@ -29,7 +29,7 @@ f = st.selectbox(
 indep = f.independent_parameters()
 
 # =========================
-# Result selection
+# Result mapping
 # =========================
 plot_map = {}
 for i, r in enumerate(f.results, 1):
@@ -39,33 +39,53 @@ for i, r in enumerate(f.results, 1):
     )
     plot_map[f"[{i}] {label}"] = r
 
+all_keys = list(plot_map.keys())
+
+# =========================
+# Default: select ALL
+# =========================
 selected = st.multiselect(
     "Select result(s) to plot",
-    plot_map.keys()
+    options=all_keys,
+    default=all_keys
 )
 
 # =========================
 # Plot + Download (IN-MEMORY ONLY)
 # =========================
 if selected and st.button("Plot"):
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(figsize=(8, 5))
 
     for label in selected:
         r = plot_map[label]
-        x, y = zip(*r.data)
-        ax.plot(x, y, label=label)
 
-    desc = f.results[0].description
-    ax.set_xlabel(desc[0] if desc else "X")
-    ax.set_ylabel(desc[1] if len(desc) > 1 else "Y")
+        # Original data format: (frequency, s21)
+        freq, s21 = zip(*r.data)
+
+        ax.plot(freq, s21, label=label)
+
+    # ---------- Axis labels ----------
+    ax.set_xlabel("Frequency (GHz)")
+    ax.set_ylabel("S2,1 (dB)")
     ax.set_title(f.display_name)
-    ax.legend()
+
+    # ---------- Axis limits (BORDER) ----------
+    ax.set_xlim(1.0, 7.0)
+    ax.set_ylim(-45.0, 0.0)
+
+    # ---------- Legend outside ----------
+    ax.legend(
+        loc="center left",
+        bbox_to_anchor=(1.02, 0.5),
+        borderaxespad=0
+    )
+
     ax.grid(True)
 
-    # ---------- Show plot ----------
-    st.pyplot(fig)
+    # ---------- Render ----------
+    st.pyplot(fig, clear_figure=True)
 
-    # ---------- Prepare in-memory PNG ----------
+    # ---------- In-memory download ----------
     buf = BytesIO()
     fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
     buf.seek(0)
@@ -75,14 +95,12 @@ if selected and st.button("Plot"):
         .replace(" ", "_")
         .replace(".txt", "")
     )
-    file_name = f"{safe_file}_plot.png"
 
     st.download_button(
         label="⬇️ Download figure (PNG)",
         data=buf,
-        file_name=file_name,
+        file_name=f"{safe_file}_plot.png",
         mime="image/png"
     )
 
     plt.close(fig)
-
