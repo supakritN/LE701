@@ -1,20 +1,17 @@
 import streamlit as st
+from pathlib import Path
+from datetime import datetime
+
+from core.file import File
 from core.auth import require_login
 
 require_login()
 
-from pathlib import Path
-from datetime import datetime
-from core.file import File
+st.title("Upload")
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 UPLOAD_DIR = BASE_DIR / "db" / "upload"
-RESULT_DIR = BASE_DIR / "db" / "results"
-
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-RESULT_DIR.mkdir(parents=True, exist_ok=True)
-
-st.title("Upload")
 
 uploaded_files = st.file_uploader(
     "Upload S-parameter .txt files",
@@ -38,4 +35,5 @@ if uploaded_files and st.button("Execute"):
     st.session_state["files"] = files
     st.session_state["current_run_id"] = run_id
 
-    st.success(f"Run {run_id} completed.")
+    st.success(f"Run `{run_id}` executed successfully.")
+    st.info("Go to **File Overview** or **Plotting**.")

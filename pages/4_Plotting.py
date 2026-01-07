@@ -8,18 +8,18 @@ require_login()
 
 st.title("Plotting")
 
-# -------------------------
+# =========================
 # State
-# -------------------------
+# =========================
 files = st.session_state.get("files", [])
 
 if not files:
-    st.info("Upload and execute files first.")
+    st.info("Upload files or restore a run first.")
     st.stop()
 
-# -------------------------
+# =========================
 # File selection
-# -------------------------
+# =========================
 f = st.selectbox(
     "Select file",
     files,
@@ -28,15 +28,15 @@ f = st.selectbox(
 
 indep = f.independent_parameters()
 
-# -------------------------
+# =========================
 # Result selection
-# -------------------------
+# =========================
 plot_map = {}
 for i, r in enumerate(f.results, 1):
-    label = ", ".join(
-        f"{k}={r.config[k]}" for k in indep
-    ) if indep else "fixed"
-
+    label = (
+        ", ".join(f"{k}={r.config[k]}" for k in indep)
+        if indep else "fixed"
+    )
     plot_map[f"[{i}] {label}"] = r
 
 selected = st.multiselect(
@@ -44,9 +44,9 @@ selected = st.multiselect(
     plot_map.keys()
 )
 
-# -------------------------
-# Plot + Download
-# -------------------------
+# =========================
+# Plot + Download (IN-MEMORY ONLY)
+# =========================
 if selected and st.button("Plot"):
     fig, ax = plt.subplots()
 
@@ -62,16 +62,20 @@ if selected and st.button("Plot"):
     ax.legend()
     ax.grid(True)
 
-    # ---------- Render ----------
+    # ---------- Show plot ----------
     st.pyplot(fig)
 
-    # ---------- In-memory download ----------
+    # ---------- Prepare in-memory PNG ----------
     buf = BytesIO()
     fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
     buf.seek(0)
 
-    safe_name = f.display_name.replace(" ", "_").replace(".txt", "")
-    file_name = f"{safe_name}_plot.png"
+    safe_file = (
+        f.display_name
+        .replace(" ", "_")
+        .replace(".txt", "")
+    )
+    file_name = f"{safe_file}_plot.png"
 
     st.download_button(
         label="⬇️ Download figure (PNG)",
