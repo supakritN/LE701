@@ -47,7 +47,7 @@ def find_peak(
     if f1 is None or f2 is None:
         raise ValueError("Bandwidth bounds not found")
 
-    return float(f1), float(fres), float(f2)
+    return float(f1), float(fres), float(f2), smin
 
 
 def get_low_band(
