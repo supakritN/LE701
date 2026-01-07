@@ -1,27 +1,33 @@
 import streamlit as st
+from core.auth import login, is_authenticated
 
-APP_PASSWORD = "s21-analyzer"
+st.set_page_config(page_title="Login", layout="wide")
 
-st.set_page_config(
-    page_title="S-Parameter Automation Tool",
-    layout="wide"
-)
+# Hide sidebar BEFORE login
+if not is_authenticated():
+    st.markdown(
+        """
+        <style>
+        [data-testid="stSidebarNav"] { display: none; }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
+# If already logged in, redirect to main page
+if is_authenticated():
+    st.switch_page("pages/1_Upload.py")
 
 st.title("Login")
 
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
+with st.form("login_form"):
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
+    submit = st.form_submit_button("Login")
 
-pwd = st.text_input("Password", type="password")
-
-if st.button("Login"):
-    if pwd == APP_PASSWORD:
-        st.session_state.authenticated = True
-        st.success("Login successful. Use the sidebar to navigate.")
-        st.rerun()
-    else:
-        st.error("Invalid password")
-
-if st.session_state.authenticated:
-    st.info("Use the sidebar to continue.")
-
+    if submit:
+        if login(username, password):
+            st.success("Login successful")
+            st.switch_page("pages/1_Upload.py")
+        else:
+            st.error("Invalid credentials")

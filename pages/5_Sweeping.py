@@ -4,12 +4,12 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 from core.auth import require_login
-from rf_math.rf_metrics import analyze_notch_response
+from rf_math.rf_dualband import analyze_dualband_notch
 
 require_login()
 
 st.title("Sweeping Analysis")
-st.caption("Bandwidth and Quality Factor analysis (−3 dB notch method)")
+st.caption("Dual-band −3 dB notch analysis (Bandwidth & Q factor)")
 
 # ============================================================
 # State
@@ -30,40 +30,25 @@ f = st.selectbox(
 )
 
 # ============================================================
-# Sweep parameter selection
+# Sweep parameter
 # ============================================================
 SWEEP_OPTIONS = {
     "er (permittivity)": "er",
     "tan_delta (loss tangent)": "tan_delta",
-    "size": "MUT_size"
+    "size": "size"
 }
 
-sweep_label = st.selectbox(
-    "Select sweep parameter",
-    options=list(SWEEP_OPTIONS.keys())
-)
+label = st.selectbox("Select sweep parameter", list(SWEEP_OPTIONS))
+sweep_param = SWEEP_OPTIONS[label]
 
-sweep_param = SWEEP_OPTIONS[sweep_label]
+values = [r.config.get(sweep_param) for r in f.results if sweep_param in r.config]
+values = sorted(set(values))
 
-# Validate sweep parameter
-values = [
-    r.config.get(sweep_param)
-    for r in f.results
-    if sweep_param in r.config
-]
-
-unique_values = sorted(set(values))
-
-if len(unique_values) < 2:
-    st.error(
-        f"Sweep parameter `{sweep_param}` does not vary "
-        f"(only one value found)."
-    )
+if len(values) < 2:
+    st.error(f"`{sweep_param}` does not vary.")
     st.stop()
 
-st.success(
-    f"Sweeping `{sweep_param}` with values: {unique_values}"
-)
+st.success(f"Sweeping `{sweep_param}` = {values}")
 
 # ============================================================
 # Frequency window
@@ -71,24 +56,23 @@ st.success(
 st.subheader("Frequency window (GHz)")
 
 all_freq = np.concatenate([
-    np.array([p[0] for p in r.data])
-    for r in f.results
+    np.array([p[0] for p in r.data]) for r in f.results
 ])
 
-f_min, f_max = float(all_freq.min()), float(all_freq.max())
+fmin, fmax = float(all_freq.min()), float(all_freq.max())
 
 window = st.slider(
-    "Select analysis window",
-    min_value=round(f_min, 2),
-    max_value=round(f_max, 2),
-    value=(round(f_min, 2), round(f_max, 2)),
+    "Analysis window",
+    min_value=round(fmin, 2),
+    max_value=round(fmax, 2),
+    value=(round(fmin, 2), round(fmax, 2)),
     step=0.01
 )
 
 # ============================================================
 # Analysis
 # ============================================================
-rows = []
+rows_low, rows_high = [], []
 
 for r in f.results:
     if sweep_param not in r.config:
@@ -97,87 +81,72 @@ for r in f.results:
     freq = np.array([p[0] for p in r.data])
     s21 = np.array([p[1] for p in r.data])
 
-    result = analyze_notch_response(
-        freq=freq,
-        s21=s21,
-        window=window
-    )
-
+    result = analyze_dualband_notch(freq, s21, window)
     if result is None:
         continue
 
-    rows.append({
+    rows_low.append({
         sweep_param: r.config[sweep_param],
-        "f0 (GHz)": result["f0"],
-        "BW (GHz)": result["bw"],
-        "Q": result["q"]
+        "Q": result["low"]["Q"],
+        "BW": result["low"]["bw"]
     })
 
-df = pd.DataFrame(rows).sort_values(sweep_param)
+    rows_high.append({
+        sweep_param: r.config[sweep_param],
+        "Q": result["high"]["Q"],
+        "BW": result["high"]["bw"]
+    })
 
-if df.empty:
-    st.warning("No valid sweep results found in the selected window.")
+df_low = pd.DataFrame(rows_low).sort_values(sweep_param)
+df_high = pd.DataFrame(rows_high).sort_values(sweep_param)
+
+if df_low.empty or df_high.empty:
+    st.warning("No valid dual-band results.")
     st.stop()
 
 # ============================================================
-# Results table
+# Bandwidth plot
 # ============================================================
-st.subheader("Sweep results")
-st.dataframe(df, use_container_width=True)
+st.subheader("Bandwidth vs sweep parameter")
 
-# ============================================================
-# Sweep plots
-# ============================================================
-st.subheader("Sweep plots")
-
-# ---- Q vs sweep parameter ----
-fig_q, ax_q = plt.subplots()
-ax_q.plot(df[sweep_param], df["Q"], marker="o")
-ax_q.set_xlabel(sweep_param)
-ax_q.set_ylabel("Quality Factor (Q)")
-ax_q.grid(True)
-st.pyplot(fig_q)
-
-# ---- BW vs sweep parameter ----
 fig_bw, ax_bw = plt.subplots()
-ax_bw.plot(df[sweep_param], df["BW (GHz)"], marker="o")
+
+ax_bw.plot(
+    df_low[sweep_param], df_low["BW"],
+    marker="s", color="black", label="Low band"
+)
+ax_bw.plot(
+    df_high[sweep_param], df_high["BW"],
+    marker="o", color="red", label="High band"
+)
+
 ax_bw.set_xlabel(sweep_param)
 ax_bw.set_ylabel("Bandwidth (GHz)")
+ax_bw.legend()
 ax_bw.grid(True)
+
 st.pyplot(fig_bw)
 
 # ============================================================
-# S2,1 overlay plot
+# Q factor plot
 # ============================================================
-st.subheader("S2,1 sweep overlay")
+st.subheader("Q factor vs sweep parameter")
 
-fig_s21, ax_s21 = plt.subplots(figsize=(8, 5))
+fig_q, ax_q = plt.subplots()
 
-for r in f.results:
-    if sweep_param not in r.config:
-        continue
-
-    freq = np.array([p[0] for p in r.data])
-    s21 = np.array([p[1] for p in r.data])
-
-    mask = (freq >= window[0]) & (freq <= window[1])
-
-    ax_s21.plot(
-        freq[mask],
-        s21[mask],
-        label=f"{sweep_param}={r.config[sweep_param]}"
-    )
-
-ax_s21.set_xlabel("Frequency (GHz)")
-ax_s21.set_ylabel("S2,1 (dB)")
-ax_s21.set_xlim(window)
-ax_s21.set_ylim(-45, 0)
-
-ax_s21.legend(
-    loc="center left",
-    bbox_to_anchor=(1.02, 0.5)
+ax_q.plot(
+    df_low[sweep_param], df_low["Q"],
+    marker="s", color="black", label="Low band"
+)
+ax_q.plot(
+    df_high[sweep_param], df_high["Q"],
+    marker="o", color="red", label="High band"
 )
 
-ax_s21.grid(True)
-st.pyplot(fig_s21)
+ax_q.set_xlabel(sweep_param)
+ax_q.set_ylabel("Q factor")
+ax_q.legend()
+ax_q.grid(True)
+
+st.pyplot(fig_q)
 

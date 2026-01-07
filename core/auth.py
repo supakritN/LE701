@@ -1,9 +1,18 @@
 import streamlit as st
 
-def require_login():
-    if "authenticated" not in st.session_state:
-        st.session_state.authenticated = False
 
-    if not st.session_state.authenticated:
-        st.warning("Please log in to continue.")
-        st.stop()
+def is_authenticated() -> bool:
+    return st.session_state.get("authenticated", False)
+
+
+def login(username: str, password: str) -> bool:
+    # Simple placeholder auth
+    if username == "admin" and password == "Le7012026":
+        st.session_state["authenticated"] = True
+        return True
+    return False
+
+
+def require_login():
+    if not is_authenticated():
+        st.switch_page("web_app.py")
