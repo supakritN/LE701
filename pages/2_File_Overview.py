@@ -3,10 +3,11 @@ from core.auth import require_login
 
 require_login()
 
-import pandas as pd
+from math_utils.overview_table import build_overview_tables
+
 
 st.title("File Overview")
-st.caption("Summary of uploaded files and parsed result blocks")
+st.caption("Overview of sweep parameters and result structure")
 
 files = st.session_state.get("files", [])
 
@@ -14,46 +15,25 @@ if not files:
     st.info("No files available. Please upload and execute first.")
     st.stop()
 
+
 for f in files:
     with st.expander(f"📄 {f.display_name}", expanded=False):
 
-        st.markdown(f"**Total Results:** {len(f.results)}")
+        st.markdown(f"**Total result blocks:** {len(f.results)}")
 
-        desc = f.results[0].description if f.results else []
-        if desc:
-            st.markdown(f"**X-axis:** {desc[0]}")
-            if len(desc) > 1:
-                st.markdown(f"**Y-axis:** {desc[1]}")
+        if not f.results:
+            st.info("No parsed results.")
+            continue
 
-        # Independent parameters
-        indep = f.independent_parameters()
-        st.subheader("Independent parameter(s)")
-        if indep:
-            st.table(pd.DataFrame(
-                [{"Parameter": k, "Values": sorted(set(v))} for k, v in indep.items()]
-            ))
+        tables = build_overview_tables(
+            [{"parameters": r.config} for r in f.results]
+        )
+
+        st.subheader("Sweep overview")
+
+        if not tables:
+            st.info("No valid sweep detected.")
         else:
-            st.write("None")
-
-        # Control parameters
-        ctrl = f.control_parameters()
-        st.subheader("Control parameter(s)")
-        if ctrl:
-            st.table(pd.DataFrame(
-                [{"Parameter": k, "Value": v} for k, v in ctrl.items()]
-            ))
-        else:
-            st.write("None")
-
-        # Result blocks
-        st.subheader("Result blocks")
-        rows = []
-        for i, r in enumerate(f.results, 1):
-            label = ", ".join(f"{k}={r.config[k]}" for k in indep) if indep else "fixed"
-            rows.append({
-                "Result ID": i,
-                "Setting": label,
-                "Points": r.count_data()
-            })
-
-        st.table(pd.DataFrame(rows))
+            for sweep_param, df in tables.items():
+                st.markdown(f"### Sweep candidate: `{sweep_param}`")
+                st.table(df)
