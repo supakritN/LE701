@@ -60,7 +60,10 @@ def build_summary_table(
         q_low = quality_factor(low_fres, bw_low)
         q_high = quality_factor(high_fres, bw_high)
 
-        rows.append({
+        # -----------------------------------------------------
+        # Base row (existing metrics)
+        # -----------------------------------------------------
+        row = {
             sweep_param: param_value,
 
             "low_f1 (GHz)": low_f1,
@@ -78,7 +81,15 @@ def build_summary_table(
 
             "Q_low": q_low,
             "Q_high": q_high,
-        })
+        }
+
+        # -----------------------------------------------------
+        # ADD CONFIG (hidden-by-default intent)
+        # -----------------------------------------------------
+        for k, v in r.config.items():
+            row[f"{k}"] = v
+
+        rows.append(row)
 
     if not rows:
         raise ValueError("No valid sweep data found")
@@ -99,7 +110,7 @@ def build_summary_table(
     df["Δf_high (MHz)"] = (df["high_fres (GHz)"] - base_high_f).abs() * 1000
 
     # ---------------------------------------------------------
-    # Sensitivity (only meaningful if sweep varies)
+    # Sensitivity
     # ---------------------------------------------------------
     low_sen = []
     high_sen = []
