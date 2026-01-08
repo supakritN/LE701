@@ -4,11 +4,20 @@ import pandas as pd
 from core.auth import require_login
 from math_utils.summary_table import build_summary_table
 
+# ============================================================
+# Auth
+# ============================================================
 require_login()
 
+# ============================================================
+# Page header
+# ============================================================
 st.title("Calculation Table")
 st.caption("Sweep-based resonance summary")
 
+# ============================================================
+# Load files
+# ============================================================
 files = st.session_state.get("files", [])
 
 if not files:
@@ -40,30 +49,20 @@ sweep_param = st.selectbox(
     list(f.overview.keys())
 )
 
+# ============================================================
+# Authoritative sweep overview
+# ============================================================
 overview_df = f.overview[sweep_param]
+st.table(overview_df)
 
 # ============================================================
-# Extract control variables (authoritative)
+# Extract fixed control variables (LOGIC ONLY)
 # ============================================================
-control_values = {}
-
-for _, row in overview_df.iterrows():
-    p = row["Parameter"]
-    if not p.startswith("[SWEEP]"):
-        control_values[p] = row["Value(s)"]
-
-# ============================================================
-# Show control variables
-# ============================================================
-st.subheader("Control variables (fixed)")
-
-if control_values:
-    st.table(pd.DataFrame([
-        {"Parameter": k, "Value": v}
-        for k, v in control_values.items()
-    ]))
-else:
-    st.write("None")
+control_values = {
+    row["Parameter"]: row["Value(s)"]
+    for _, row in overview_df.iterrows()
+    if not row["Parameter"].startswith("[SWEEP]")
+}
 
 # ============================================================
 # Filter results → true 1-D sweep slice
@@ -71,11 +70,11 @@ else:
 filtered_results = []
 
 for r in f.results:
-    # Must contain sweep param
+    # Must contain sweep parameter
     if sweep_param not in r.config:
         continue
 
-    # Must match all fixed controls
+    # Must match all fixed control variables
     valid = True
     for k, v in control_values.items():
         if str(r.config.get(k)) != str(v):
@@ -99,6 +98,8 @@ df = build_summary_table(
 )
 
 # ============================================================
-# Display
+# Display result
 # ============================================================
+st.subheader("Calculation result")
 st.dataframe(df, use_container_width=True, hide_index=True)
+
