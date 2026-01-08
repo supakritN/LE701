@@ -42,7 +42,7 @@ if not f.overview:
     st.stop()
 
 # ============================================================
-# Select sweep parameter (ONLY valid sweeps)
+# Select sweep parameter
 # ============================================================
 sweep_param = st.selectbox(
     "Select sweep parameter",
@@ -50,56 +50,58 @@ sweep_param = st.selectbox(
 )
 
 # ============================================================
-# Authoritative sweep overview
-# ============================================================
-overview_df = f.overview[sweep_param]
-st.table(overview_df)
-
-# ============================================================
-# Extract fixed control variables (LOGIC ONLY)
-# ============================================================
-control_values = {
-    row["Parameter"]: row["Value(s)"]
-    for _, row in overview_df.iterrows()
-    if not row["Parameter"].startswith("[SWEEP]")
-}
-
-# ============================================================
-# Filter results → true 1-D sweep slice
-# ============================================================
-filtered_results = []
-
-for r in f.results:
-    # Must contain sweep parameter
-    if sweep_param not in r.config:
-        continue
-
-    # Must match all fixed control variables
-    valid = True
-    for k, v in control_values.items():
-        if str(r.config.get(k)) != str(v):
-            valid = False
-            break
-
-    if valid:
-        filtered_results.append(r)
-
-if len(filtered_results) < 2:
-    st.error("Not enough valid sweep points after filtering.")
-    st.stop()
-
-# ============================================================
-# Build calculation table (math only)
+# Build FULL summary table (no column slicing)
 # ============================================================
 df = build_summary_table(
-    results=filtered_results,
+    results=f.results,
     sweep_param=sweep_param,
     scope=4.0
 )
 
 # ============================================================
-# Display result
+# FILTER BAR
+# Format: column=value column=value
 # ============================================================
 st.subheader("Calculation result")
-st.dataframe(df, use_container_width=True, hide_index=True)
+st.caption("Filter format: column=value column=value (space separated)")
+
+filter_text = st.text_input(
+    "Filter",
+    placeholder="er=3 tan_delta=0.02"
+)
+
+df_filtered = df
+
+if filter_text.strip():
+    try:
+        conditions = filter_text.split()
+        mask = pd.Series(True, index=df.index)
+
+        for cond in conditions:
+            if "=" not in cond:
+                raise ValueError(f"Invalid condition: {cond}")
+
+            col, val = cond.split("=", 1)
+            col = col.strip()
+            val = val.strip()
+
+            if col not in df.columns:
+                raise ValueError(f"Unknown column: {col}")
+
+            mask &= df[col].astype(str) == val
+
+        df_filtered = df[mask]
+
+    except Exception as e:
+        st.error(f"Filter error: {e}")
+        st.stop()
+
+# ============================================================
+# Display FULL table (original columns, no rename)
+# ============================================================
+st.dataframe(
+    df_filtered,
+    use_container_width=True,
+    hide_index=True
+)
 
