@@ -1,15 +1,62 @@
 import streamlit as st
 import numpy as np
-import matplotlib.pyplot as plt
-from io import BytesIO
+import plotly.graph_objects as go
 
 from core.auth import require_login
-from rf_math.resonance import extract_dualband_resonances
 
 require_login()
 
-st.title("Plotting")
-st.caption("S2,1 response with dual-band resonance annotation")
+st.title("Plotting (Plotly)")
+st.caption("Interactive S2,1 plotting")
+
+# ============================================================
+# Helpers
+# ============================================================
+def filter_results(results, filter_text):
+    """
+    Filter results by config using format:
+    column=value column=value
+    """
+    if not filter_text.strip():
+        return results
+
+    conditions = filter_text.split()
+    filtered = []
+
+    for r in results:
+        keep = True
+        for cond in conditions:
+            if "=" not in cond:
+                raise ValueError(f"Invalid condition: {cond}")
+
+            key, val = cond.split("=", 1)
+            key = key.strip()
+            val = val.strip()
+
+            if key not in r.config:
+                raise ValueError(f"Unknown config key: {key}")
+
+            if str(r.config[key]) != val:
+                keep = False
+                break
+
+        if keep:
+            filtered.append(r)
+
+    return filtered
+
+
+def build_legend_label(r, sweep_param):
+    """
+    Build legend label.
+    - If sweep_param is selected: show only that param
+    - Otherwise: show full config
+    """
+    if sweep_param and sweep_param in r.config:
+        return f"{sweep_param}={r.config[sweep_param]}"
+    else:
+        return ", ".join(f"{k}={v}" for k, v in r.config.items())
+
 
 # ============================================================
 # State
@@ -29,35 +76,87 @@ f = st.selectbox(
     format_func=lambda x: x.display_name
 )
 
-indep = f.independent_parameters()
+# ============================================================
+# Select sweep parameter (LEGEND ONLY)
+# ============================================================
+if hasattr(f, "overview") and isinstance(f.overview, dict) and f.overview:
+    sweep_param = st.selectbox(
+        "Select sweep parameter (legend only)",
+        ["(none)"] + list(f.overview.keys())
+    )
+    if sweep_param == "(none)":
+        sweep_param = None
+else:
+    sweep_param = None
 
 # ============================================================
-# Build plot map
+# Filter bar
+# ============================================================
+st.subheader("Calculation result")
+st.caption("Filter format: column=value column=value (space separated)")
+
+filter_text = st.text_input(
+    "Filter",
+    placeholder="er=3 tan_delta=0.02"
+)
+
+try:
+    filtered_results = filter_results(f.results, filter_text)
+except Exception as e:
+    st.error(f"Filter error: {e}")
+    st.stop()
+
+if not filtered_results:
+    st.warning("No results match the filter.")
+    st.stop()
+
+# ============================================================
+# Build plot map (NO filtering by sweep)
 # ============================================================
 plot_map = {}
-for i, r in enumerate(f.results, 1):
-    param_label = (
-        ", ".join(f"{k}={r.config[k]}" for k in indep)
-        if indep else "fixed"
-    )
-    plot_map[f"[{i}] {param_label}"] = r
+for i, r in enumerate(filtered_results, 1):
+    label = build_legend_label(r, sweep_param)
+    plot_map[f"[{i}] {label}"] = r
 
 all_keys = list(plot_map.keys())
 
 # ============================================================
-# Default: select ALL
+# Plot options
+# ============================================================
+plot_mode = st.radio(
+    "Plot type",
+    options=["Raw S21 (Line)", "Custom X–Y"],
+    horizontal=True
+)
+
+if plot_mode == "Custom X–Y":
+    st.markdown(
+        """
+        **Variables**
+        - `freq` : frequency array (GHz)
+        - `s21`  : S2,1 magnitude (dB)
+        - `np`   : NumPy
+        """
+    )
+    custom_x = st.text_input("X expression", value="freq")
+    custom_y = st.text_input("Y expression", value="s21")
+else:
+    custom_x = custom_y = None
+
+# ============================================================
+# Result selection
 # ============================================================
 selected = st.multiselect(
-    "Select result(s) to plot",
+    "Select result(s)",
     options=all_keys,
     default=all_keys
 )
 
 # ============================================================
-# Plot + Download (IN-MEMORY ONLY)
+# Plot
 # ============================================================
 if selected and st.button("Plot"):
-    fig, ax = plt.subplots(figsize=(8, 5))
+    fig = go.Figure()
 
     for key in selected:
         r = plot_map[key]
@@ -65,57 +164,65 @@ if selected and st.button("Plot"):
         freq = np.array([p[0] for p in r.data])
         s21 = np.array([p[1] for p in r.data])
 
-        try:
-            res = extract_dualband_resonances(freq, s21)
+        # ----------------------------------------------------
+        # RAW → line plot
+        # ----------------------------------------------------
+        if plot_mode.startswith("Raw"):
+            fig.add_trace(go.Scatter(
+                x=freq,
+                y=s21,
+                mode="lines",
+                name=key
+            ))
 
-            label = (
-                f"{key} | "
-                f"Low={res['f_low']:.3f} GHz, "
-                f"High={res['f_high']:.3f} GHz, "
-                f"Main={res['f_res']:.3f} GHz"
-            )
-        except Exception:
-            # Fallback if resonance extraction fails
-            label = key
+        # ----------------------------------------------------
+        # CUSTOM X–Y
+        # ----------------------------------------------------
+        else:
+            try:
+                scope = {"freq": freq, "s21": s21, "np": np}
+                x = eval(custom_x, {}, scope)
+                y = eval(custom_y, {}, scope)
+            except Exception as e:
+                st.error(f"{key}: {e}")
+                continue
 
-        ax.plot(freq, s21, label=label)
+            fig.add_trace(go.Scatter(
+                x=x,
+                y=y,
+                mode="lines",
+                name=key
+            ))
 
-    # ---------- Axis labels ----------
-    ax.set_xlabel("Frequency (GHz)")
-    ax.set_ylabel("S2,1 (dB)")
-    ax.set_title(f.display_name)
-
-    # ---------- Axis limits ----------
-    ax.set_ylim(-45, 0)
-
-    # ---------- Legend outside ----------
-    ax.legend(
-        loc="center left",
-        bbox_to_anchor=(1.02, 0.5),
-        borderaxespad=0
+    # ========================================================
+    # Layout
+    # ========================================================
+    fig.update_layout(
+        title=f.display_name,
+        xaxis_title="Frequency (GHz)" if plot_mode.startswith("Raw") else custom_x,
+        yaxis_title="S2,1 (dB)" if plot_mode.startswith("Raw") else custom_y,
+        legend_title="Legend",
+        height=520
     )
 
-    ax.grid(True)
+    if plot_mode.startswith("Raw"):
+        fig.update_yaxes(range=[-45, 0])
 
-    # ---------- Render ----------
-    st.pyplot(fig, clear_figure=True)
-
-    # ---------- In-memory download ----------
-    buf = BytesIO()
-    fig.savefig(buf, format="png", dpi=300, bbox_inches="tight")
-    buf.seek(0)
-
-    safe_name = (
-        f.display_name
-        .replace(" ", "_")
-        .replace(".txt", "")
+    # ========================================================
+    # Render + built-in download
+    # ========================================================
+    st.plotly_chart(
+        fig,
+        use_container_width=True,
+        config={
+            "displaylogo": False,
+            "toImageButtonOptions": {
+                "format": "png",
+                "filename": f.display_name.replace(" ", "_"),
+                "height": 520,
+                "width": 900,
+                "scale": 2
+            }
+        }
     )
 
-    st.download_button(
-        label="⬇️ Download figure (PNG)",
-        data=buf,
-        file_name=f"{safe_name}_S21_plot.png",
-        mime="image/png"
-    )
-
-    plt.close(fig)
