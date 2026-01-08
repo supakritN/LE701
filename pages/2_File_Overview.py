@@ -3,9 +3,6 @@ from core.auth import require_login
 
 require_login()
 
-from math_utils.overview_table import build_overview_tables
-
-
 st.title("File Overview")
 st.caption("Overview of sweep parameters and result structure")
 
@@ -25,15 +22,12 @@ for f in files:
             st.info("No parsed results.")
             continue
 
-        tables = build_overview_tables(
-            [{"parameters": r.config} for r in f.results]
-        )
-
         st.subheader("Sweep overview")
 
-        if not tables:
+        if not f.overview:
             st.info("No valid sweep detected.")
-        else:
-            for sweep_param, df in tables.items():
-                st.markdown(f"### Sweep candidate: `{sweep_param}`")
-                st.table(df)
+            continue
+
+        for sweep_param, df in f.overview.items():
+            st.markdown(f"### Sweep candidate: `{sweep_param}`")
+            st.table(df)

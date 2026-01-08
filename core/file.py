@@ -2,6 +2,9 @@ from pathlib import Path
 from typing import List, Dict
 import csv
 import io
+from collections import defaultdict
+
+import pandas as pd
 
 from .result import Result
 
@@ -15,6 +18,9 @@ class File:
         self.path: Path = path
         self.display_name: str = display_name or path.name
         self.results: List[Result] = []
+
+        # Sweep overview (built after parsing)
+        self.overview: Dict[str, pd.DataFrame] = {}
 
     # ======================
     # Parsing
@@ -56,8 +62,14 @@ class File:
                         except ValueError:
                             pass
 
+        # 🔑 Build sweep overview ONCE, after parsing is complete
+        file_obj._build_overview()
+
         return file_obj
 
+    # ======================
+    # Parsing helpers
+    # ======================
     @staticmethod
     def _parse_config(line: str) -> Dict[str, float]:
         """
@@ -83,6 +95,57 @@ class File:
         return [s.strip() for s in line.replace('"', "").split("\t") if s]
 
     # ======================
+    # Sweep overview (AUTHORITATIVE)
+    # ======================
+    def _build_overview(self) -> None:
+        """
+        Build sweep overview tables.
+
+        Rules
+        -----
+        - Sweep parameter must have >1 unique value
+        - Only FIXED parameters appear as control variables
+        - Varying non-sweep parameters are excluded
+        """
+
+        self.overview = {}
+
+        if not self.results:
+            return
+
+        # Collect parameter values across results
+        param_values = defaultdict(list)
+        for r in self.results:
+            for k, v in r.config.items():
+                param_values[k].append(v)
+
+        for sweep_param, values in param_values.items():
+            sweep_vals = sorted(set(values))
+
+            # Must be a real sweep
+            if len(sweep_vals) <= 1:
+                continue
+
+            rows = [{
+                "Parameter": f"[SWEEP] {sweep_param}",
+                "Value(s)": ", ".join(map(str, sweep_vals))
+            }]
+
+            # Fixed control parameters only
+            for p, vals in param_values.items():
+                if p == sweep_param:
+                    continue
+
+                uniq = sorted(set(vals))
+                if len(uniq) == 1:
+                    rows.append({
+                        "Parameter": p,
+                        "Value(s)": str(uniq[0])
+                    })
+
+            self.overview[sweep_param] = pd.DataFrame(rows)
+
+    # ======================
     # Accessors
     # ======================
     def get_results(self) -> List[Result]:
@@ -91,43 +154,6 @@ class File:
     def get_result(self) -> List[Result]:
         # alias for convenience
         return self.results
-
-    # ======================
-    # Parameter classification
-    # ======================
-    def independent_parameters(self) -> Dict[str, List[float]]:
-        """
-        Parameters whose values vary across results (sweep variables).
-        """
-        if not self.results:
-            return {}
-
-        keys = self.results[0].config.keys()
-        indep: Dict[str, List[float]] = {}
-
-        for k in keys:
-            values = [r.config.get(k) for r in self.results]
-            if len(set(values)) > 1:
-                indep[k] = values
-
-        return indep
-
-    def control_parameters(self) -> Dict[str, float]:
-        """
-        Parameters whose values are fixed across all results.
-        """
-        if not self.results:
-            return {}
-
-        keys = self.results[0].config.keys()
-        ctrl: Dict[str, float] = {}
-
-        for k in keys:
-            values = {r.config.get(k) for r in self.results}
-            if len(values) == 1:
-                ctrl[k] = values.pop()
-
-        return ctrl
 
     # ======================
     # Summary (console)
@@ -140,38 +166,22 @@ class File:
             return
 
         desc = self.results[0].description
-        indep = self.independent_parameters()
-        ctrl = self.control_parameters()
 
         if desc:
             print(f"X-axis: {desc[0]}")
             if len(desc) > 1:
                 print(f"Y-axis: {desc[1]}")
 
-        print("Independent parameter(s):")
-        if indep:
-            for k, v in indep.items():
-                print(f"  {k}: {sorted(set(v))}")
+        print("\nSweep overview:")
+        if not self.overview:
+            print("  No valid sweep detected.")
         else:
-            print("  None")
-
-        print("Control parameter(s):")
-        if ctrl:
-            for k, v in ctrl.items():
-                print(f"  {k} = {v}")
-        else:
-            print("  None")
-
-        print("\nResults detail:")
-        for i, r in enumerate(self.results, 1):
-            label = ", ".join(
-                f"{k}={r.config[k]}" for k in indep
-            ) if indep else "fixed"
-
-            print(f"[{i}] {label} | points={r.count_data()}")
+            for k, df in self.overview.items():
+                print(f"\n  Sweep: {k}")
+                print(df.to_string(index=False))
 
     # ======================
-    # CSV Export (in-memory)
+    # CSV Export (unchanged)
     # ======================
     def export_csv_bytes(self) -> Dict[str, bytes]:
         """
@@ -192,7 +202,6 @@ class File:
         config_rows = []
 
         for i, r in enumerate(self.results, 1):
-            # data.csv
             for x, y in r.data:
                 data_rows.append({
                     "file": self.display_name,
@@ -201,7 +210,6 @@ class File:
                     "y": y
                 })
 
-            # meta.csv
             meta_rows.append({
                 "file": self.display_name,
                 "result_id": i,
@@ -210,7 +218,6 @@ class File:
                 "points": r.count_data()
             })
 
-            # config.csv
             for k, v in r.config.items():
                 config_rows.append({
                     "file": self.display_name,
@@ -227,3 +234,4 @@ class File:
             outputs["config.csv"] = write_csv(config_rows)
 
         return outputs
+
