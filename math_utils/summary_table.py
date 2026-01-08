@@ -30,7 +30,7 @@ def build_summary_table(
     normalize: bool = True
 ) -> pd.DataFrame:
     """
-    Build resonance summary table.
+    Build resonance summary table with sweep-dependent metrics.
 
     Units
     -----
@@ -60,34 +60,33 @@ def build_summary_table(
         q_low = quality_factor(low_fres, bw_low)
         q_high = quality_factor(high_fres, bw_high)
 
-        # -----------------------------------------------------
-        # Base row (existing metrics)
-        # -----------------------------------------------------
         row = {
             sweep_param: param_value,
 
+            # --- low band
             "low_f1 (GHz)": low_f1,
             "low_fres (GHz)": low_fres,
             "low_f2 (GHz)": low_f2,
             "low_s21 (dB)": low_s21,
 
+            # --- high band
             "high_f1 (GHz)": high_f1,
             "high_fres (GHz)": high_fres,
             "high_f2 (GHz)": high_f2,
             "high_s21 (dB)": high_s21,
 
+            # --- bandwidth
             "BW_low (GHz)": bw_low,
             "BW_high (GHz)": bw_high,
 
+            # --- Q
             "Q_low": q_low,
             "Q_high": q_high,
         }
 
-        # -----------------------------------------------------
-        # ADD CONFIG (hidden-by-default intent)
-        # -----------------------------------------------------
+        # add all config parameters (hidden-by-default intent)
         for k, v in r.config.items():
-            row[f"{k}"] = v
+            row[k] = v
 
         rows.append(row)
 
@@ -110,42 +109,93 @@ def build_summary_table(
     df["Δf_high (MHz)"] = (df["high_fres (GHz)"] - base_high_f).abs() * 1000
 
     # ---------------------------------------------------------
-    # Sensitivity
+    # Sweep-dependent metrics
     # ---------------------------------------------------------
-    low_sen = []
-    high_sen = []
-    low_sen_norm = []
-    high_sen_norm = []
+    if sweep_param == "er":
+        low_sen, high_sen = [], []
+        low_sen_norm, high_sen_norm = [], []
 
-    for p, dfl, dfh in zip(
-        df[sweep_param],
-        df["Δf_low (MHz)"],
-        df["Δf_high (MHz)"]
-    ):
-        if p == base_param:
-            low_sen.append("N/A")
-            high_sen.append("N/A")
-            low_sen_norm.append("N/A")
-            high_sen_norm.append("N/A")
-            continue
+        for p, dfl, dfh in zip(
+            df[sweep_param],
+            df["Δf_low (MHz)"],
+            df["Δf_high (MHz)"]
+        ):
+            if p == base_param:
+                low_sen.append("N/A")
+                high_sen.append("N/A")
+                low_sen_norm.append("N/A")
+                high_sen_norm.append("N/A")
+                continue
 
-        sen_low = dfl / abs(p - base_param)
-        sen_high = dfh / abs(p - base_param)
+            sen_low = dfl / abs(p - base_param)
+            sen_high = dfh / abs(p - base_param)
 
-        low_sen.append(sen_low)
-        high_sen.append(sen_high)
+            low_sen.append(sen_low)
+            high_sen.append(sen_high)
 
-        if normalize:
-            low_sen_norm.append(sen_low / base_low_f)
-            high_sen_norm.append(sen_high / base_high_f)
-        else:
-            low_sen_norm.append("N/A")
-            high_sen_norm.append("N/A")
+            if normalize:
+                low_sen_norm.append(sen_low / base_low_f)
+                high_sen_norm.append(sen_high / base_high_f)
+            else:
+                low_sen_norm.append("N/A")
+                high_sen_norm.append("N/A")
 
-    df["low_sen (MHz/unit)"] = low_sen
-    df["high_sen (MHz/unit)"] = high_sen
-    df["low_sen_norm (1/unit)"] = low_sen_norm
-    df["high_sen_norm (1/unit)"] = high_sen_norm
+        df["low_sen (MHz/unit)"] = low_sen
+        df["high_sen (MHz/unit)"] = high_sen
+        df["low_sen_norm (1/unit)"] = low_sen_norm
+        df["high_sen_norm (1/unit)"] = high_sen_norm
+
+    elif sweep_param == "tan_delta":
+        df["invQ_low"] = 1.0 / df["Q_low"]
+        df["invQ_high"] = 1.0 / df["Q_high"]
+
+    elif sweep_param == "MUT_size":
+        dsize = (df[sweep_param] - base_param).replace(0, pd.NA)
+
+        df["df0_low_per_size (MHz/unit)"] = (
+            df["Δf_low (MHz)"] / dsize
+        )
+        df["df0_high_per_size (MHz/unit)"] = (
+            df["Δf_high (MHz)"] / dsize
+        )
+
+    # ---------------------------------------------------------
+    # Column ordering
+    # ---------------------------------------------------------
+    config_cols = [c for c in df.columns if c not in [
+        sweep_param,
+        "low_f1 (GHz)", "low_fres (GHz)", "low_f2 (GHz)", "low_s21 (dB)",
+        "high_f1 (GHz)", "high_fres (GHz)", "high_f2 (GHz)", "high_s21 (dB)",
+        "BW_low (GHz)", "BW_high (GHz)",
+        "Q_low", "Q_high",
+        "Δf_low (MHz)", "Δf_high (MHz)",
+        "low_sen (MHz/unit)", "high_sen (MHz/unit)",
+        "low_sen_norm (1/unit)", "high_sen_norm (1/unit)",
+        "invQ_low", "invQ_high",
+        "df0_low_per_size (MHz/unit)", "df0_high_per_size (MHz/unit)",
+    ]]
+
+    signal_cols = [
+        "low_f1 (GHz)", "low_fres (GHz)", "low_f2 (GHz)", "low_s21 (dB)",
+        "high_f1 (GHz)", "high_fres (GHz)", "high_f2 (GHz)", "high_s21 (dB)",
+    ]
+
+    df_cols = [c for c in df.columns if c.startswith("Δf_")]
+
+    sweep_specific_cols = [
+        c for c in df.columns
+        if c not in ([sweep_param] + config_cols + signal_cols + df_cols)
+    ]
+
+    ordered_cols = (
+        [sweep_param]
+        + config_cols
+        + signal_cols
+        + df_cols
+        + sweep_specific_cols
+    )
+
+    df = df[ordered_cols]
 
     return df
 
