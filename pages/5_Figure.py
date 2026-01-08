@@ -3,11 +3,12 @@ import numpy as np
 import plotly.graph_objects as go
 
 from core.auth import require_login
+from math_utils.summary_table import build_summary_table
 
 require_login()
 
-st.title("Plotting (Plotly)")
-st.caption("Interactive S2,1 plotting")
+st.title("Plotting")
+st.caption("Frequency response and dual-band comparison")
 
 # ============================================================
 # Helpers
@@ -48,21 +49,19 @@ def filter_results(results, filter_text):
 
 def build_legend_label(r, sweep_param):
     """
-    Build legend label.
-    - If sweep_param is selected: show only that param
-    - Otherwise: show full config
+    Legend behavior:
+    - If sweep_param selected → show only that param
+    - Else → show full config
     """
     if sweep_param and sweep_param in r.config:
         return f"{sweep_param}={r.config[sweep_param]}"
-    else:
-        return ", ".join(f"{k}={v}" for k, v in r.config.items())
+    return ", ".join(f"{k}={v}" for k, v in r.config.items())
 
 
 # ============================================================
 # State
 # ============================================================
 files = st.session_state.get("files", [])
-
 if not files:
     st.info("Upload files or restore a run first.")
     st.stop()
@@ -76,8 +75,10 @@ f = st.selectbox(
     format_func=lambda x: x.display_name
 )
 
+results = f.results
+
 # ============================================================
-# Select sweep parameter (LEGEND ONLY)
+# Sweep parameter (LEGEND ONLY)
 # ============================================================
 if hasattr(f, "overview") and isinstance(f.overview, dict) and f.overview:
     sweep_param = st.selectbox(
@@ -90,7 +91,7 @@ else:
     sweep_param = None
 
 # ============================================================
-# Filter bar
+# Filter bar (REQUIRED)
 # ============================================================
 st.subheader("Calculation result")
 st.caption("Filter format: column=value column=value (space separated)")
@@ -101,7 +102,7 @@ filter_text = st.text_input(
 )
 
 try:
-    filtered_results = filter_results(f.results, filter_text)
+    filtered_results = filter_results(results, filter_text)
 except Exception as e:
     st.error(f"Filter error: {e}")
     st.stop()
@@ -111,118 +112,144 @@ if not filtered_results:
     st.stop()
 
 # ============================================================
-# Build plot map (NO filtering by sweep)
+# Plot type
 # ============================================================
-plot_map = {}
-for i, r in enumerate(filtered_results, 1):
-    label = build_legend_label(r, sweep_param)
-    plot_map[f"[{i}] {label}"] = r
-
-all_keys = list(plot_map.keys())
-
-# ============================================================
-# Plot options
-# ============================================================
-plot_mode = st.radio(
+plot_type = st.radio(
     "Plot type",
-    options=["Raw S21 (Line)", "Custom X–Y"],
+    ["Frequency × S2,1", "Compare 2 bands"],
     horizontal=True
 )
 
-if plot_mode == "Custom X–Y":
-    st.markdown(
-        """
-        **Variables**
-        - `freq` : frequency array (GHz)
-        - `s21`  : S2,1 magnitude (dB)
-        - `np`   : NumPy
-        """
+# ============================================================
+# -------- Frequency × S2,1 --------
+# ============================================================
+if plot_type == "Frequency × S2,1":
+
+    selected = st.multiselect(
+        "Select result(s)",
+        options=list(range(len(filtered_results))),
+        default=list(range(len(filtered_results))),
+        format_func=lambda i: build_legend_label(
+            filtered_results[i], sweep_param
+        )
     )
-    custom_x = st.text_input("X expression", value="freq")
-    custom_y = st.text_input("Y expression", value="s21")
-else:
-    custom_x = custom_y = None
 
-# ============================================================
-# Result selection
-# ============================================================
-selected = st.multiselect(
-    "Select result(s)",
-    options=all_keys,
-    default=all_keys
-)
+    if st.button("Plot"):
+        fig = go.Figure()
 
-# ============================================================
-# Plot
-# ============================================================
-if selected and st.button("Plot"):
-    fig = go.Figure()
+        for i in selected:
+            r = filtered_results[i]
+            freq = np.array([p[0] for p in r.data])
+            s21 = np.array([p[1] for p in r.data])
 
-    for key in selected:
-        r = plot_map[key]
-
-        freq = np.array([p[0] for p in r.data])
-        s21 = np.array([p[1] for p in r.data])
-
-        # ----------------------------------------------------
-        # RAW → line plot
-        # ----------------------------------------------------
-        if plot_mode.startswith("Raw"):
             fig.add_trace(go.Scatter(
                 x=freq,
                 y=s21,
                 mode="lines",
-                name=key
+                name=build_legend_label(r, sweep_param)
             ))
 
-        # ----------------------------------------------------
-        # CUSTOM X–Y
-        # ----------------------------------------------------
-        else:
-            try:
-                scope = {"freq": freq, "s21": s21, "np": np}
-                x = eval(custom_x, {}, scope)
-                y = eval(custom_y, {}, scope)
-            except Exception as e:
-                st.error(f"{key}: {e}")
-                continue
-
-            fig.add_trace(go.Scatter(
-                x=x,
-                y=y,
-                mode="lines",
-                name=key
-            ))
-
-    # ========================================================
-    # Layout
-    # ========================================================
-    fig.update_layout(
-        title=f.display_name,
-        xaxis_title="Frequency (GHz)" if plot_mode.startswith("Raw") else custom_x,
-        yaxis_title="S2,1 (dB)" if plot_mode.startswith("Raw") else custom_y,
-        legend_title="Legend",
-        height=520
-    )
-
-    if plot_mode.startswith("Raw"):
+        fig.update_layout(
+            title=f.display_name,
+            xaxis_title="Frequency (GHz)",
+            yaxis_title="S2,1 (dB)",
+            height=520
+        )
         fig.update_yaxes(range=[-45, 0])
 
-    # ========================================================
-    # Render + built-in download
-    # ========================================================
-    st.plotly_chart(
-        fig,
-        use_container_width=True,
-        config={
-            "displaylogo": False,
-            "toImageButtonOptions": {
-                "format": "png",
-                "filename": f.display_name.replace(" ", "_"),
-                "height": 520,
-                "width": 900,
-                "scale": 2
+        st.plotly_chart(
+            fig,
+            use_container_width=True,
+            config={
+                "displaylogo": False,
+                "toImageButtonOptions": {
+                    "format": "png",
+                    "filename": f.display_name.replace(" ", "_"),
+                    "scale": 2
+                }
             }
-        }
+        )
+
+# ============================================================
+# -------- Compare 2 bands (USING SUMMARY TABLE) --------
+# ============================================================
+else:
+    st.subheader("Compare 2 bands")
+
+    # X parameter (sweep axis)
+    x_param = st.selectbox(
+        "X parameter",
+        list(filtered_results[0].config.keys())
     )
 
+    # Y metric
+    y_metric = st.selectbox(
+        "Y metric",
+        ["s21", "Q", "fres"]
+    )
+
+    if st.button("Plot"):
+        # --------------------------------------------
+        # Build summary table (single source of truth)
+        # --------------------------------------------
+        try:
+            df = build_summary_table(filtered_results, sweep_param=x_param)
+        except Exception as e:
+            st.error(f"Summary table error: {e}")
+            st.stop()
+
+        x = df[x_param]
+
+        if y_metric == "s21":
+            y_low = df["low_s21 (dB)"]
+            y_high = df["high_s21 (dB)"]
+            y_label = "S2,1 (dB)"
+
+        elif y_metric == "Q":
+            y_low = df["Q_low"]
+            y_high = df["Q_high"]
+            y_label = "Q"
+
+        elif y_metric == "fres":
+            y_low = df["low_fres (GHz)"]
+            y_high = df["high_fres (GHz)"]
+            y_label = "Resonant frequency (GHz)"
+
+        else:
+            st.stop()
+
+        fig = go.Figure()
+
+        fig.add_trace(go.Scatter(
+            x=x,
+            y=y_low,
+            mode="lines+markers",
+            name="Low band"
+        ))
+
+        fig.add_trace(go.Scatter(
+            x=x,
+            y=y_high,
+            mode="lines+markers",
+            name="High band"
+        ))
+
+        fig.update_layout(
+            title=f"{y_metric} vs {x_param}",
+            xaxis_title=x_param,
+            yaxis_title=y_label,
+            height=520
+        )
+
+        st.plotly_chart(
+            fig,
+            use_container_width=True,
+            config={
+                "displaylogo": False,
+                "toImageButtonOptions": {
+                    "format": "png",
+                    "filename": f"{y_metric}_vs_{x_param}",
+                    "scale": 2
+                }
+            }
+        )
