@@ -3,9 +3,11 @@
 video update
  
 application demo (v0.1): https://www.youtube.com/watch?v=u3RcZc7BvMY
+
 installation guide: https://www.youtube.com/watch?v=6EfRpunKPk0
  
 source code: https://github.com/supakritN/LE701
+
 quick use: https://le701.nithiapp.in.th/ (Deploy ทิ้งไว้ สามารถเข้าใช้งานผ่าน internet)
 
 # Prerequisite
