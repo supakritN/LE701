@@ -26,6 +26,8 @@ For windows
 source .venv/Script/activate
 ```
 
+Deploy application
+
 ``` bash
 pip install -r requirements.txt
 .venv/bin/streamlit run web_app.py \
