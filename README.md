@@ -12,7 +12,14 @@ version 0.1 youtube: https://youtu.be/u3RcZc7BvMY
 ``` bash
 git clone https://github.com/supakritN/LE701.git
 cd LE701
-python -m venv .venv
+python3 -m venv .venv
+```
+
+If no venv module, For Ubuntu (please check the python version before, for example python version 3.10)
+
+``` bash
+python -V
+sudo apt install python3.10-venv
 ```
 
 For mac/linux
