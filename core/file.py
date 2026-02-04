@@ -2,11 +2,12 @@ from pathlib import Path
 from typing import List, Dict
 import csv
 import io
-from collections import defaultdict
+from collections import defaultdict, Counter
 
 import pandas as pd
 
 from .result import Result
+from math_utils.signal_feature import extract_bands
 
 
 class File:
@@ -36,23 +37,19 @@ class File:
                 if not line:
                     continue
 
-                # ---- New result block ----
                 if line.startswith("#Parameters"):
                     current_result = Result()
                     current_result.config = cls._parse_config(line)
                     file_obj.results.append(current_result)
                     continue
 
-                # ---- Description ----
                 if line.startswith('#"') and current_result:
                     current_result.description = cls._parse_description(line[1:])
                     continue
 
-                # ---- Comment / separator ----
                 if line.startswith("#"):
                     continue
 
-                # ---- Data ----
                 if current_result:
                     parts = line.split()
                     if len(parts) == 2:
@@ -62,9 +59,7 @@ class File:
                         except ValueError:
                             pass
 
-        # 🔑 Build sweep overview ONCE, after parsing is complete
         file_obj._build_overview()
-
         return file_obj
 
     # ======================
@@ -72,166 +67,72 @@ class File:
     # ======================
     @staticmethod
     def _parse_config(line: str) -> Dict[str, float]:
-        """
-        Parse:
-        #Parameters = {a=1; b=2; c=3}
-        """
         content = line.split("{", 1)[1].rsplit("}", 1)[0]
         cfg: Dict[str, float] = {}
-
         for item in content.split(";"):
             if "=" in item:
                 k, v = item.split("=")
                 cfg[k.strip()] = float(v)
-
         return cfg
 
     @staticmethod
     def _parse_description(line: str) -> List[str]:
-        """
-        Parse:
-        "Frequency / GHz"    "S2,1 (2) [Magnitude]"
-        """
         return [s.strip() for s in line.replace('"', "").split("\t") if s]
 
     # ======================
-    # Sweep overview (AUTHORITATIVE)
+    # Sweep overview
     # ======================
     def _build_overview(self) -> None:
-        """
-        Build sweep overview tables.
-
-        Rules
-        -----
-        - Sweep parameter must have >1 unique value
-        - Only FIXED parameters appear as control variables
-        - Varying non-sweep parameters are excluded
-        """
-
         self.overview = {}
-
         if not self.results:
             return
 
-        # Collect parameter values across results
         param_values = defaultdict(list)
         for r in self.results:
             for k, v in r.config.items():
                 param_values[k].append(v)
 
         for sweep_param, values in param_values.items():
-            sweep_vals = sorted(set(values))
-
-            # Must be a real sweep
-            if len(sweep_vals) <= 1:
+            uniq = sorted(set(values))
+            if len(uniq) <= 1:
                 continue
 
             rows = [{
                 "Parameter": f"[SWEEP] {sweep_param}",
-                "Value(s)": ", ".join(map(str, sweep_vals))
+                "Value(s)": ", ".join(map(str, uniq))
             }]
 
-            # Fixed control parameters only
             for p, vals in param_values.items():
                 if p == sweep_param:
                     continue
-
-                uniq = sorted(set(vals))
-                if len(uniq) == 1:
+                if len(set(vals)) == 1:
                     rows.append({
                         "Parameter": p,
-                        "Value(s)": str(uniq[0])
+                        "Value(s)": str(vals[0])
                     })
 
             self.overview[sweep_param] = pd.DataFrame(rows)
 
     # ======================
-    # Accessors
+    # Dip analysis (compute once)
     # ======================
-    def get_results(self) -> List[Result]:
-        return self.results
-
-    def get_result(self) -> List[Result]:
-        # alias for convenience
-        return self.results
-
-    # ======================
-    # Summary (console)
-    # ======================
-    def summary(self) -> None:
-        print(f"\nFile: {self.display_name}")
-        print(f"Results: {len(self.results)}")
-
-        if not self.results:
-            return
-
-        desc = self.results[0].description
-
-        if desc:
-            print(f"X-axis: {desc[0]}")
-            if len(desc) > 1:
-                print(f"Y-axis: {desc[1]}")
-
-        print("\nSweep overview:")
-        if not self.overview:
-            print("  No valid sweep detected.")
-        else:
-            for k, df in self.overview.items():
-                print(f"\n  Sweep: {k}")
-                print(df.to_string(index=False))
+    def analyze_bands_once(self) -> None:
+        for r in self.results:
+            if r.n_bands > 0 or not r.band_valid:
+                continue
+            try:
+                bands = extract_bands(r.data)
+                r.set_bands(bands)
+            except Exception:
+                r.invalidate_bands()
 
     # ======================
-    # CSV Export (unchanged)
+    # Dip summary (for UI)
     # ======================
-    def export_csv_bytes(self) -> Dict[str, bytes]:
-        """
-        Export CSVs as in-memory bytes (for Streamlit download).
-        Returns: {filename: bytes}
-        """
-        outputs: Dict[str, bytes] = {}
-
-        def write_csv(rows: List[dict]) -> bytes:
-            buf = io.StringIO()
-            writer = csv.DictWriter(buf, fieldnames=rows[0].keys())
-            writer.writeheader()
-            writer.writerows(rows)
-            return buf.getvalue().encode("utf-8")
-
-        data_rows = []
-        meta_rows = []
-        config_rows = []
-
-        for i, r in enumerate(self.results, 1):
-            for x, y in r.data:
-                data_rows.append({
-                    "file": self.display_name,
-                    "result_id": i,
-                    "x": x,
-                    "y": y
-                })
-
-            meta_rows.append({
-                "file": self.display_name,
-                "result_id": i,
-                "x_label": r.description[0] if r.description else "",
-                "y_label": r.description[1] if len(r.description) > 1 else "",
-                "points": r.count_data()
-            })
-
-            for k, v in r.config.items():
-                config_rows.append({
-                    "file": self.display_name,
-                    "result_id": i,
-                    "parameter": k,
-                    "value": v
-                })
-
-        if data_rows:
-            outputs["data.csv"] = write_csv(data_rows)
-        if meta_rows:
-            outputs["meta.csv"] = write_csv(meta_rows)
-        if config_rows:
-            outputs["config.csv"] = write_csv(config_rows)
-
-        return outputs
-
+    def dip_summary(self) -> Dict[str, int | None]:
+        counts = Counter(
+            r.n_bands for r in self.results if r.band_valid
+        )
+        if not counts:
+            return {"expected": None}
+        return {"expected": counts.most_common(1)[0][0]}

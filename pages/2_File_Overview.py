@@ -12,7 +12,6 @@ if not files:
     st.info("No files available. Please upload and execute first.")
     st.stop()
 
-
 for f in files:
     with st.expander(f"📄 {f.display_name}", expanded=False):
 
@@ -22,6 +21,14 @@ for f in files:
             st.info("No parsed results.")
             continue
 
+        # ---- minimal dip display ----
+        f.analyze_bands_once()
+        dip = f.dip_summary()["expected"]
+
+        if dip is not None:
+            st.markdown(f"**Resonance dips:** {dip}")
+
+        # ---- sweep overview ----
         st.subheader("Sweep overview")
 
         if not f.overview:
