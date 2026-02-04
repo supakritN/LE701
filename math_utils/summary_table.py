@@ -48,70 +48,68 @@ def build_summary_table(
         if sweep_param not in r.config:
             continue
 
-        er = r.config[sweep_param]
+        sweep_param_value = r.config[sweep_param]
         bands = extract_bands(r.data)
 
-        row = {sweep_param: er}
+        row = {sweep_param: sweep_param_value}
 
         # ----------------------------------------------------
         # Per-band metrics
         # ----------------------------------------------------
         for i, band in enumerate(bands):
-            prefix = f"Band {i+1}"
-
-            # baseline only meaningful for er sweep
-            base_f0 = baseline_f0[i] if baseline_f0 is not None else None
+            prefix = f"band{i+1}"
 
             # ---- signal features
-            row[f"{prefix} f1 (GHz)"] = band.f1.f
-            row[f"{prefix} f1 S21 (dB)"] = band.f1.s21
+            row[f"{prefix}_f1_f(GHz)"] = band.f1.f
+            row[f"{prefix}_f1_s21(dB)"] = band.f1.s21
 
-            row[f"{prefix} f0 (GHz)"] = band.f0.f
-            row[f"{prefix} min S21 (dB)"] = band.f0.s21
+            row[f"{prefix}_f0_f(GHz)"] = band.f0.f
+            row[f"{prefix}_f0_s21(dB)"] = band.f0.s21
 
-            row[f"{prefix} f2 (GHz)"] = band.f2.f
-            row[f"{prefix} f2 S21 (dB)"] = band.f2.s21
+            row[f"{prefix}_f2_f(GHz)"] = band.f2.f
+            row[f"{prefix}_f2_s21(dB)"] = band.f2.s21
 
             # ---- intrinsic RF metrics
-            row[f"{prefix} BW (GHz)"] = band.bw()
-            row[f"{prefix} Q"] = band.q()
-            row[f"{prefix} 1/Q"] = band.inv_q()
+            row[f"{prefix}_bw(GHz)"] = band.bw()
+            row[f"{prefix}_q"] = band.q()
+            row[f"{prefix}_1/q"] = band.inv_q()
 
             # ---- frequency shift (only valid if baseline exists)
-            if base_f0 is not None:
-                shift_MHz = frequency_shift_MHz(band, base_f0)
-                row[f"{prefix} Δf0 (MHz)"] = shift_MHz
-                row[f"{prefix} |Δf0| (MHz)"] = abs(shift_MHz)
-            else:
-                shift_MHz = float("nan")
-                row[f"{prefix} Δf0 (MHz)"] = float("nan")
-                row[f"{prefix} |Δf0| (MHz)"] = float("nan")
+            if sweep_param == "er":
+                base_f0 = baseline_f0[i] if baseline_f0 is not None else None
+                if base_f0 is not None:
+                    shift_MHz = frequency_shift_MHz(band, base_f0)
+                    row[f"{prefix}_Δf0(MHz)"] = shift_MHz
+                    row[f"{prefix}_|Δf0|(MHz)"] = abs(shift_MHz)
+                    
+                    er = r.config["er"]
+                    row[f"{prefix} Sensitivity (MHz/εr)"] = sensitivity(
+                        shift_MHz=shift_MHz,
+                        er=er,
+                        er_base=er_base,
+                        baseline_f0=base_f0,
+                        norm=False,
+                    )
+                    row[f"{prefix} Sensitivity norm (MHz/εr)"] = sensitivity(
+                        shift_MHz=shift_MHz,
+                        er=er,
+                        er_base=er_base,
+                        baseline_f0=base_f0,
+                        norm=True,
+                    )
+                else:
+                    shift_MHz = float("nan")
+                    row[f"{prefix}_Δf0(MHz)"] = float("nan")
+                    row[f"{prefix}_|Δf0|(MHz)"] = float("nan")
 
-            # ---- sensitivity (only when baseline exists)
-            if base_f0 is not None:
-                row[f"{prefix} Sensitivity (MHz/εr)"] = sensitivity(
-                    shift_MHz=shift_MHz,
-                    er=er,
-                    er_base=er_base,
-                    baseline_f0=base_f0,
-                    norm=False,
-                )
-                row[f"{prefix} Sensitivity norm (MHz/εr)"] = sensitivity(
-                    shift_MHz=shift_MHz,
-                    er=er,
-                    er_base=er_base,
-                    baseline_f0=base_f0,
-                    norm=True,
-                )
-            else:
-                row[f"{prefix} Sensitivity (MHz/εr)"] = float("nan")
-                row[f"{prefix} Sensitivity norm (MHz/εr)"] = float("nan")
+                    row[f"{prefix} Sensitivity (MHz/εr)"] = float("nan")
+                    row[f"{prefix} Sensitivity norm (MHz/εr)"] = float("nan")
 
         # ----------------------------------------------------
         # Inter-band spacing
         # ----------------------------------------------------
         for i in range(len(bands) - 1):
-            row[f"Δf Band {i+1}–{i+2} (GHz)"] = window_size(
+            row[f"window_band{i+1}–{i+2}(GHz)"] = window_size(
                 bands[i], bands[i + 1]
             )
 
