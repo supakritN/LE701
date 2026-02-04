@@ -1,201 +1,130 @@
 import pandas as pd
 from typing import List, Any
 
-from math_utils.signal_feature import get_low_band, get_high_band
-
-
-# ============================================================
-# RF metrics
-# ============================================================
-def bandwidth(f1: float, f2: float) -> float:
-    bw = f2 - f1
-    if bw <= 0:
-        raise ValueError("Bandwidth must be positive")
-    return bw
-
-
-def quality_factor(f0: float, bw: float) -> float:
-    if bw <= 0:
-        raise ValueError("Bandwidth must be positive")
-    return f0 / bw
+from math_utils.signal_feature import extract_bands
+from math_utils.rf_metrics import (
+    frequency_shift_MHz,
+    sensitivity,
+    window_size,
+)
 
 
 # ============================================================
 # Summary table
 # ============================================================
+
 def build_summary_table(
     results: List[Any],
     sweep_param: str,
-    scope: float = 4.0,
-    normalize: bool = True
+    er_base: float = 1.0,
 ) -> pd.DataFrame:
     """
-    Build resonance summary table with sweep-dependent metrics.
-
-    Units
-    -----
-    Frequency : GHz
-    Δf        : MHz
-    Q         : unitless
-    Sensitivity : MHz / unit
+    Build sweep-based resonance summary table.
     """
 
     rows = []
+    baseline_f0 = None
 
-    # ---------------------------------------------------------
-    # Collect resonance data
-    # ---------------------------------------------------------
+    # --------------------------------------------------------
+    # Find baseline ONLY if sweeping permittivity
+    # --------------------------------------------------------
+    if sweep_param == "er":
+        for r in results:
+            if sweep_param not in r.config:
+                continue
+
+            if r.config[sweep_param] == er_base:
+                bands = extract_bands(r.data)
+                baseline_f0 = [b.f0.f for b in bands]
+                break
+
+        if baseline_f0 is None:
+            raise ValueError(f"Baseline er={er_base} not found")
+
+    # --------------------------------------------------------
+    # Main loop
+    # --------------------------------------------------------
     for r in results:
         if sweep_param not in r.config:
             continue
 
-        param_value = r.config[sweep_param]
+        er = r.config[sweep_param]
+        bands = extract_bands(r.data)
 
-        low_f1, low_fres, low_f2, low_s21 = get_low_band(r.data, scope=scope)
-        high_f1, high_fres, high_f2, high_s21 = get_high_band(r.data, scope=scope)
+        row = {sweep_param: er}
 
-        bw_low = bandwidth(low_f1, low_f2)
-        bw_high = bandwidth(high_f1, high_f2)
+        # ----------------------------------------------------
+        # Per-band metrics
+        # ----------------------------------------------------
+        for i, band in enumerate(bands):
+            prefix = f"Band {i+1}"
 
-        q_low = quality_factor(low_fres, bw_low)
-        q_high = quality_factor(high_fres, bw_high)
+            # baseline only meaningful for er sweep
+            base_f0 = baseline_f0[i] if baseline_f0 is not None else None
 
-        row = {
-            sweep_param: param_value,
+            # ---- signal features
+            row[f"{prefix} f1 (GHz)"] = band.f1.f
+            row[f"{prefix} f1 S21 (dB)"] = band.f1.s21
 
-            # --- low band
-            "low_f1 (GHz)": low_f1,
-            "low_fres (GHz)": low_fres,
-            "low_f2 (GHz)": low_f2,
-            "low_s21 (dB)": low_s21,
+            row[f"{prefix} f0 (GHz)"] = band.f0.f
+            row[f"{prefix} min S21 (dB)"] = band.f0.s21
 
-            # --- high band
-            "high_f1 (GHz)": high_f1,
-            "high_fres (GHz)": high_fres,
-            "high_f2 (GHz)": high_f2,
-            "high_s21 (dB)": high_s21,
+            row[f"{prefix} f2 (GHz)"] = band.f2.f
+            row[f"{prefix} f2 S21 (dB)"] = band.f2.s21
 
-            # --- bandwidth
-            "BW_low (GHz)": bw_low,
-            "BW_high (GHz)": bw_high,
+            # ---- intrinsic RF metrics
+            row[f"{prefix} BW (GHz)"] = band.bw()
+            row[f"{prefix} Q"] = band.q()
+            row[f"{prefix} 1/Q"] = band.inv_q()
 
-            # --- Q
-            "Q_low": q_low,
-            "Q_high": q_high,
-        }
+            # ---- frequency shift (only valid if baseline exists)
+            if base_f0 is not None:
+                shift_MHz = frequency_shift_MHz(band, base_f0)
+                row[f"{prefix} Δf0 (MHz)"] = shift_MHz
+                row[f"{prefix} |Δf0| (MHz)"] = abs(shift_MHz)
+            else:
+                shift_MHz = float("nan")
+                row[f"{prefix} Δf0 (MHz)"] = float("nan")
+                row[f"{prefix} |Δf0| (MHz)"] = float("nan")
 
-        # add all config parameters (hidden-by-default intent)
+            # ---- sensitivity (only when baseline exists)
+            if base_f0 is not None:
+                row[f"{prefix} Sensitivity (MHz/εr)"] = sensitivity(
+                    shift_MHz=shift_MHz,
+                    er=er,
+                    er_base=er_base,
+                    baseline_f0=base_f0,
+                    norm=False,
+                )
+                row[f"{prefix} Sensitivity norm (MHz/εr)"] = sensitivity(
+                    shift_MHz=shift_MHz,
+                    er=er,
+                    er_base=er_base,
+                    baseline_f0=base_f0,
+                    norm=True,
+                )
+            else:
+                row[f"{prefix} Sensitivity (MHz/εr)"] = float("nan")
+                row[f"{prefix} Sensitivity norm (MHz/εr)"] = float("nan")
+
+        # ----------------------------------------------------
+        # Inter-band spacing
+        # ----------------------------------------------------
+        for i in range(len(bands) - 1):
+            row[f"Δf Band {i+1}–{i+2} (GHz)"] = window_size(
+                bands[i], bands[i + 1]
+            )
+
+        # ----------------------------------------------------
+        # Preserve config
+        # ----------------------------------------------------
         for k, v in r.config.items():
             row[k] = v
 
         rows.append(row)
 
-    if not rows:
-        raise ValueError("No valid sweep data found")
-
-    # ---------------------------------------------------------
-    # Build DataFrame
-    # ---------------------------------------------------------
-    df = pd.DataFrame(rows).sort_values(sweep_param).reset_index(drop=True)
-
-    # ---------------------------------------------------------
-    # Δf (MHz) relative to baseline
-    # ---------------------------------------------------------
-    base_low_f = df.loc[0, "low_fres (GHz)"]
-    base_high_f = df.loc[0, "high_fres (GHz)"]
-    base_param = df.loc[0, sweep_param]
-
-    df["Δf_low (MHz)"] = (df["low_fres (GHz)"] - base_low_f).abs() * 1000
-    df["Δf_high (MHz)"] = (df["high_fres (GHz)"] - base_high_f).abs() * 1000
-
-    # ---------------------------------------------------------
-    # Sweep-dependent metrics
-    # ---------------------------------------------------------
-    if sweep_param == "er":
-        low_sen, high_sen = [], []
-        low_sen_norm, high_sen_norm = [], []
-
-        for p, dfl, dfh in zip(
-            df[sweep_param],
-            df["Δf_low (MHz)"],
-            df["Δf_high (MHz)"]
-        ):
-            if p == base_param:
-                low_sen.append("N/A")
-                high_sen.append("N/A")
-                low_sen_norm.append("N/A")
-                high_sen_norm.append("N/A")
-                continue
-
-            sen_low = dfl / abs(p - base_param)
-            sen_high = dfh / abs(p - base_param)
-
-            low_sen.append(sen_low)
-            high_sen.append(sen_high)
-
-            if normalize:
-                low_sen_norm.append(sen_low / base_low_f)
-                high_sen_norm.append(sen_high / base_high_f)
-            else:
-                low_sen_norm.append("N/A")
-                high_sen_norm.append("N/A")
-
-        df["low_sen (MHz/unit)"] = low_sen
-        df["high_sen (MHz/unit)"] = high_sen
-        df["low_sen_norm (1/unit)"] = low_sen_norm
-        df["high_sen_norm (1/unit)"] = high_sen_norm
-
-    elif sweep_param == "tan_delta":
-        df["invQ_low"] = 1.0 / df["Q_low"]
-        df["invQ_high"] = 1.0 / df["Q_high"]
-
-    elif sweep_param == "MUT_size":
-        dsize = (df[sweep_param] - base_param).replace(0, pd.NA)
-
-        df["df0_low_per_size (MHz/unit)"] = (
-            df["Δf_low (MHz)"] / dsize
-        )
-        df["df0_high_per_size (MHz/unit)"] = (
-            df["Δf_high (MHz)"] / dsize
-        )
-
-    # ---------------------------------------------------------
-    # Column ordering
-    # ---------------------------------------------------------
-    config_cols = [c for c in df.columns if c not in [
-        sweep_param,
-        "low_f1 (GHz)", "low_fres (GHz)", "low_f2 (GHz)", "low_s21 (dB)",
-        "high_f1 (GHz)", "high_fres (GHz)", "high_f2 (GHz)", "high_s21 (dB)",
-        "BW_low (GHz)", "BW_high (GHz)",
-        "Q_low", "Q_high",
-        "Δf_low (MHz)", "Δf_high (MHz)",
-        "low_sen (MHz/unit)", "high_sen (MHz/unit)",
-        "low_sen_norm (1/unit)", "high_sen_norm (1/unit)",
-        "invQ_low", "invQ_high",
-        "df0_low_per_size (MHz/unit)", "df0_high_per_size (MHz/unit)",
-    ]]
-
-    signal_cols = [
-        "low_f1 (GHz)", "low_fres (GHz)", "low_f2 (GHz)", "low_s21 (dB)",
-        "high_f1 (GHz)", "high_fres (GHz)", "high_f2 (GHz)", "high_s21 (dB)",
-    ]
-
-    df_cols = [c for c in df.columns if c.startswith("Δf_")]
-
-    sweep_specific_cols = [
-        c for c in df.columns
-        if c not in ([sweep_param] + config_cols + signal_cols + df_cols)
-    ]
-
-    ordered_cols = (
-        [sweep_param]
-        + config_cols
-        + signal_cols
-        + df_cols
-        + sweep_specific_cols
+    return (
+        pd.DataFrame(rows)
+        .sort_values(sweep_param)
+        .reset_index(drop=True)
     )
-
-    df = df[ordered_cols]
-
-    return df
-

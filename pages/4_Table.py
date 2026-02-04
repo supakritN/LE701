@@ -4,20 +4,24 @@ import pandas as pd
 from core.auth import require_login
 from math_utils.summary_table import build_summary_table
 
+
 # ============================================================
 # Auth
 # ============================================================
+
 require_login()
 
 # ============================================================
 # Page header
 # ============================================================
+
 st.title("Calculation Table")
-st.caption("Sweep-based resonance summary")
+st.caption("Sweep-based resonance summary (baseline er = 1.0)")
 
 # ============================================================
 # Load files
 # ============================================================
+
 files = st.session_state.get("files", [])
 
 if not files:
@@ -27,6 +31,7 @@ if not files:
 # ============================================================
 # Select file
 # ============================================================
+
 f = st.selectbox(
     "Select file",
     files,
@@ -44,30 +49,31 @@ if not f.overview:
 # ============================================================
 # Select sweep parameter
 # ============================================================
+
 sweep_param = st.selectbox(
     "Select sweep parameter",
     list(f.overview.keys())
 )
 
 # ============================================================
-# Build FULL summary table (no column slicing)
+# Build summary table
 # ============================================================
+
 df = build_summary_table(
     results=f.results,
-    sweep_param=sweep_param,
-    scope=4.0
+    sweep_param=sweep_param
 )
 
 # ============================================================
-# FILTER BAR
-# Format: column=value column=value
+# Filter bar
 # ============================================================
+
 st.subheader("Calculation result")
-st.caption("Filter format: column=value column=value (space separated)")
+st.caption("Filter format: column=value (space separated)")
 
 filter_text = st.text_input(
     "Filter",
-    placeholder="er=3 tan_delta=0.02"
+    placeholder="er=2 tan_delta=0.02"
 )
 
 df_filtered = df
@@ -88,7 +94,10 @@ if filter_text.strip():
             if col not in df.columns:
                 raise ValueError(f"Unknown column: {col}")
 
-            mask &= df[col].astype(str) == val
+            if pd.api.types.is_numeric_dtype(df[col]):
+                mask &= df[col] == float(val)
+            else:
+                mask &= df[col].astype(str) == val
 
         df_filtered = df[mask]
 
@@ -97,11 +106,11 @@ if filter_text.strip():
         st.stop()
 
 # ============================================================
-# Display FULL table (original columns, no rename)
+# Display table
 # ============================================================
+
 st.dataframe(
     df_filtered,
     use_container_width=True,
     hide_index=True
 )
-

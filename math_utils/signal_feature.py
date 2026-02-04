@@ -1,80 +1,132 @@
 import numpy as np
+from dataclasses import dataclass
 from typing import List, Tuple
 
 
-def find_peak(
-    data_points: List[Tuple[float, float]],
-    threshold_db: float = 3.0
-) -> Tuple[float, float, float]:
+# ============================================================
+# Data models
+# ============================================================
+
+@dataclass(frozen=True)
+class Point:
     """
-    Find resonance peak and -3 dB bounds.
-
-    Parameters
-    ----------
-    data_points : [(freq, s21)]
-        Assumed ordered by frequency
-    threshold_db : float
-        dB level above minimum for bandwidth
-
-    Returns
-    -------
-    (f1, fres, f2)
+    One point on the S21 curve.
     """
+    f: float       # Frequency (GHz)
+    s21: float     # S21 magnitude (dB)
 
-    freq = np.array([p[0] for p in data_points])
-    s21 = np.array([p[1] for p in data_points])
 
-    # deepest notch
-    idx = int(np.argmin(s21))
-    fres = freq[idx]
-    smin = s21[idx]
-    level = smin + threshold_db
+@dataclass(frozen=True)
+class Band:
+    """
+    One resonance band defined by 3-dB bandwidth.
+    """
+    f1: Point      # Left 3-dB crossing
+    f0: Point      # Resonance (minimum S21)
+    f2: Point      # Right 3-dB crossing
 
-    # left bound
-    f1 = None
+    def bw(self) -> float:
+        """3-dB bandwidth (GHz)"""
+        bw = self.f2.f - self.f1.f
+        if bw <= 0:
+            raise ValueError("Invalid bandwidth")
+        return bw
+
+    def q(self) -> float:
+        """Loaded Q-factor"""
+        return self.f0.f / self.bw()
+
+    def inv_q(self) -> float:
+        """Inverse Q"""
+        return 1.0 / self.q()
+
+
+# ============================================================
+# Internal helpers
+# ============================================================
+
+def _find_3db_band(
+    freq: np.ndarray,
+    s21: np.ndarray,
+    idx: int,
+    threshold_db: float
+) -> Band:
+    """
+    Extract a single resonance band using 3-dB rule.
+    """
+    f0_freq = freq[idx]
+    s21_min = s21[idx]
+    level = s21_min + threshold_db
+
+    left = None
     for i in range(idx - 1, -1, -1):
         if s21[i] > level:
-            f1 = freq[i]
+            left = i
             break
 
-    # right bound
-    f2 = None
+    right = None
     for i in range(idx + 1, len(freq)):
         if s21[i] > level:
-            f2 = freq[i]
+            right = i
             break
 
-    if f1 is None or f2 is None:
-        raise ValueError("Bandwidth bounds not found")
+    if left is None or right is None:
+        raise ValueError("3-dB bounds not found")
 
-    return float(f1), float(fres), float(f2), smin
+    return Band(
+        f1=Point(freq[left], s21[left]),
+        f0=Point(f0_freq, s21_min),
+        f2=Point(freq[right], s21[right]),
+    )
 
 
-def get_low_band(
+# ============================================================
+# Public API
+# ============================================================
+
+def extract_bands(
     data_points: List[Tuple[float, float]],
-    scope: float = 4.0
-) -> Tuple[float, float, float]:
+    threshold_db: float = 3.0,
+    min_spacing: int = 5
+) -> List[Band]:
     """
-    Low band: from start to scope frequency.
+    Extract all resonance bands (Band 1 … Band N).
     """
-    scoped = [p for p in data_points if p[0] <= scope]
+    if len(data_points) < 3:
+        raise ValueError("Insufficient data points")
 
-    if len(scoped) < 3:
-        raise ValueError("Insufficient points in low-band scope")
+    freq = np.array([p[0] for p in data_points], dtype=float)
+    s21 = np.array([p[1] for p in data_points], dtype=float)
 
-    return find_peak(scoped)
+    # ---- find local minima
+    candidates = [
+        i for i in range(1, len(s21) - 1)
+        if s21[i] < s21[i - 1] and s21[i] < s21[i + 1]
+    ]
 
+    if not candidates:
+        raise ValueError("No resonance dips found")
 
-def get_high_band(
-    data_points: List[Tuple[float, float]],
-    scope: float = 4.0
-) -> Tuple[float, float, float]:
-    """
-    High band: from scope frequency to end.
-    """
-    scoped = [p for p in data_points if p[0] >= scope]
+    # ---- deepest dips first
+    candidates.sort(key=lambda i: s21[i])
 
-    if len(scoped) < 3:
-        raise ValueError("Insufficient points in high-band scope")
+    # ---- remove nearby duplicates
+    selected = []
+    for idx in candidates:
+        if all(abs(idx - j) >= min_spacing for j in selected):
+            selected.append(idx)
 
-    return find_peak(scoped)
+    bands: List[Band] = []
+    for idx in selected:
+        try:
+            bands.append(_find_3db_band(freq, s21, idx, threshold_db))
+        except ValueError:
+            continue
+
+    if not bands:
+        raise ValueError("No valid bands extracted")
+
+    # ---- stable ordering (low f0 → high f0)
+    bands.sort(key=lambda b: b.f0.f)
+
+    return bands
