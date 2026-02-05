@@ -7,7 +7,7 @@ from collections import defaultdict, Counter
 import pandas as pd
 
 from .result import Result
-from math_utils.signal_feature import extract_bands
+from math_utils.signal_feature import extract_dips
 
 
 class File:
@@ -121,7 +121,7 @@ class File:
             if r.n_bands > 0 or not r.band_valid:
                 continue
             try:
-                bands = extract_bands(r.data)
+                bands = extract_dips(r.data)
                 r.set_bands(bands)
             except Exception:
                 r.invalidate_bands()

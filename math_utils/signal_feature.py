@@ -10,19 +10,19 @@ from typing import List, Tuple
 @dataclass(frozen=True)
 class Point:
     """
-    One point on the S21 curve.
+    One point on the S21 curve (data-consistent).
     """
     f: float       # Frequency (GHz)
     s21: float     # S21 magnitude (dB)
 
 
 @dataclass(frozen=True)
-class Band:
+class Dip:
     """
-    One resonance band defined by 3-dB bandwidth.
+    One resonance dip defined by its 3-dB bandwidth.
     """
     f1: Point      # Left 3-dB crossing
-    f0: Point      # Resonance (minimum S21)
+    f0: Point      # Resonance minimum (refined)
     f2: Point      # Right 3-dB crossing
 
     def bw(self) -> float:
@@ -45,52 +45,136 @@ class Band:
 # Internal helpers
 # ============================================================
 
-def _find_3db_band(
+def _refine_minimum(freq, s21, idx) -> Point:
+    """
+    Parabolic interpolation to refine resonance minimum.
+    """
+    if idx <= 0 or idx >= len(freq) - 1:
+        return Point(freq[idx], s21[idx])
+
+    f1, f2, f3 = freq[idx - 1], freq[idx], freq[idx + 1]
+    s1, s2, s3 = s21[idx - 1], s21[idx], s21[idx + 1]
+
+    denom = (s1 - 2 * s2 + s3)
+    if denom == 0:
+        return Point(f2, s2)
+
+    delta = (s1 - s3) / (2 * denom)
+    f_min = f2 + delta * (f3 - f2)
+    s_min = s2 - 0.25 * (s1 - s3) * delta
+
+    return Point(f_min, s_min)
+
+
+def _interp_point(f1, s1, f2, s2, level) -> Point:
+    """
+    Linear interpolation to find data-consistent 3-dB crossing.
+    """
+    if s2 == s1:
+        return Point(f1, s1)
+
+    ratio = (level - s1) / (s2 - s1)
+    f = f1 + (f2 - f1) * ratio
+    s = s1 + (s2 - s1) * ratio
+
+    return Point(f, s)
+
+
+def _find_3db_dip(
     freq: np.ndarray,
     s21: np.ndarray,
     idx: int,
     threshold_db: float
-) -> Band:
+) -> Dip:
     """
-    Extract a single resonance band using 3-dB rule.
+    Extract a single resonance dip using refined f0 and interpolated 3-dB crossings.
     """
-    f0_freq = freq[idx]
-    s21_min = s21[idx]
-    level = s21_min + threshold_db
+    # ---- refined minimum
+    p0 = _refine_minimum(freq, s21, idx)
+    level = p0.s21 + threshold_db
 
-    left = None
+    # ---- left crossing (nearest)
+    p1 = None
     for i in range(idx - 1, -1, -1):
-        if s21[i] > level:
-            left = i
+        if s21[i] > level and s21[i + 1] <= level:
+            p1 = _interp_point(
+                freq[i], s21[i],
+                freq[i + 1], s21[i + 1],
+                level
+            )
             break
 
-    right = None
+    # ---- right crossing (nearest)
+    p2 = None
     for i in range(idx + 1, len(freq)):
-        if s21[i] > level:
-            right = i
+        if s21[i] > level and s21[i - 1] <= level:
+            p2 = _interp_point(
+                freq[i - 1], s21[i - 1],
+                freq[i], s21[i],
+                level
+            )
             break
 
-    if left is None or right is None:
-        raise ValueError("3-dB bounds not found")
+    if p1 is None or p2 is None or p2.f <= p1.f:
+        raise ValueError("Invalid 3-dB dip")
 
-    return Band(
-        f1=Point(freq[left], s21[left]),
-        f0=Point(f0_freq, s21_min),
-        f2=Point(freq[right], s21[right]),
+    return Dip(
+        f1=p1,
+        f0=p0,
+        f2=p2,
     )
+
+
+def _is_valid_dip(
+    dip: Dip,
+    bw_max_ratio: float = 0.1,
+    min_depth_db: float = 3.0,
+    max_sym_ratio: float = 5.0,
+) -> bool:
+    """
+    Physical validity checks for a resonance dip.
+    """
+    f0 = dip.f0.f
+    f1 = dip.f1.f
+    f2 = dip.f2.f
+
+    if not (f1 < f0 < f2):
+        return False
+
+    bw = f2 - f1
+    if bw <= 0:
+        return False
+
+    # ---- compact bandwidth (reject wide valleys)
+    if bw / f0 > bw_max_ratio:
+        return False
+
+    # ---- dip depth check
+    depth = dip.f1.s21 - dip.f0.s21
+    if depth < min_depth_db:
+        return False
+
+    # ---- symmetry check
+    left_bw = f0 - f1
+    right_bw = f2 - f0
+    sym_ratio = max(left_bw, right_bw) / min(left_bw, right_bw)
+    if sym_ratio > max_sym_ratio:
+        return False
+
+    return True
 
 
 # ============================================================
 # Public API
 # ============================================================
 
-def extract_bands(
+def extract_dips(
     data_points: List[Tuple[float, float]],
     threshold_db: float = 3.0,
     min_spacing: int = 5
-) -> List[Band]:
+) -> List[Dip]:
     """
-    Extract all resonance bands (Band 1 … Band N).
+    Extract all physically valid resonance dips.
     """
     if len(data_points) < 3:
         raise ValueError("Insufficient data points")
@@ -116,17 +200,20 @@ def extract_bands(
         if all(abs(idx - j) >= min_spacing for j in selected):
             selected.append(idx)
 
-    bands: List[Band] = []
+    dips: List[Dip] = []
     for idx in selected:
         try:
-            bands.append(_find_3db_band(freq, s21, idx, threshold_db))
+            dip = _find_3db_dip(freq, s21, idx, threshold_db)
+            if _is_valid_dip(dip):
+                dips.append(dip)
         except ValueError:
             continue
 
-    if not bands:
-        raise ValueError("No valid bands extracted")
+    if not dips:
+        raise ValueError("No valid dips extracted")
 
     # ---- stable ordering (low f0 → high f0)
-    bands.sort(key=lambda b: b.f0.f)
+    dips.sort(key=lambda d: d.f0.f)
 
-    return bands
+    return dips
+

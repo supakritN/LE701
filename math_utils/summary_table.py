@@ -1,7 +1,7 @@
 import pandas as pd
 from typing import List, Any
 
-from math_utils.signal_feature import extract_bands
+from math_utils.signal_feature import extract_dips
 from math_utils.rf_metrics import (
     frequency_shift_MHz,
     sensitivity,
@@ -34,7 +34,7 @@ def build_summary_table(
                 continue
 
             if r.config[sweep_param] == er_base:
-                bands = extract_bands(r.data)
+                bands = extract_dips(r.data)
                 baseline_f0 = [b.f0.f for b in bands]
                 break
 
@@ -49,7 +49,7 @@ def build_summary_table(
             continue
 
         sweep_param_value = r.config[sweep_param]
-        bands = extract_bands(r.data)
+        bands = extract_dips(r.data)
 
         row = {sweep_param: sweep_param_value}
 
