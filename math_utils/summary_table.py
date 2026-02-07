@@ -10,7 +10,7 @@ from math_utils.rf_metrics import (
 
 
 # ============================================================
-# Summary table
+# Summary table (complete, physics-correct, n-band)
 # ============================================================
 
 def build_summary_table(
@@ -18,24 +18,18 @@ def build_summary_table(
     sweep_param: str,
     er_base: float = 1.0,
 ) -> pd.DataFrame:
-    """
-    Build sweep-based resonance summary table.
-    """
 
     rows = []
-    baseline_f0 = None
 
     # --------------------------------------------------------
-    # Find baseline ONLY if sweeping permittivity
+    # Baseline f0 (only for permittivity sweep)
     # --------------------------------------------------------
+    baseline_f0 = None
     if sweep_param == "er":
         for r in results:
-            if sweep_param not in r.config:
-                continue
-
-            if r.config[sweep_param] == er_base:
-                bands = extract_dips(r.data)
-                baseline_f0 = [b.f0.f for b in bands]
+            if sweep_param in r.config and r.config[sweep_param] == er_base:
+                dips = extract_dips(r.data)
+                baseline_f0 = [d.f0.f for d in dips]
                 break
 
         if baseline_f0 is None:
@@ -48,79 +42,84 @@ def build_summary_table(
         if sweep_param not in r.config:
             continue
 
-        sweep_param_value = r.config[sweep_param]
-        bands = extract_dips(r.data)
-
-        row = {sweep_param: sweep_param_value}
+        dips = extract_dips(r.data)
+        row = {}
 
         # ----------------------------------------------------
-        # Per-band metrics
+        # Sweep parameter
         # ----------------------------------------------------
-        for i, band in enumerate(bands):
-            prefix = f"band{i+1}"
+        row[sweep_param] = r.config[sweep_param]
 
-            # ---- signal features
-            row[f"{prefix}_f1_f(GHz)"] = band.f1.f
-            row[f"{prefix}_f1_s21(dB)"] = band.f1.s21
+        # ----------------------------------------------------
+        # Per-band features
+        # ----------------------------------------------------
+        for i, dip in enumerate(dips):
+            p = f"band{i+1}"
 
-            row[f"{prefix}_f0_f(GHz)"] = band.f0.f
-            row[f"{prefix}_f0_s21(dB)"] = band.f0.s21
+            # ---- geometry / signal
+            row[f"{p}_f1_f(GHz)"] = dip.f1.f
+            row[f"{p}_f1_s21(dB)"] = dip.f1.s21
 
-            row[f"{prefix}_f2_f(GHz)"] = band.f2.f
-            row[f"{prefix}_f2_s21(dB)"] = band.f2.s21
+            row[f"{p}_f0_f(GHz)"] = dip.f0.f
+            row[f"{p}_f0_s21(dB)"] = dip.f0.s21
 
-            # ---- intrinsic RF metrics
-            row[f"{prefix}_bw(GHz)"] = band.bw()
-            row[f"{prefix}_q"] = band.q()
-            row[f"{prefix}_1/q"] = band.inv_q()
+            row[f"{p}_f2_f(GHz)"] = dip.f2.f
+            row[f"{p}_f2_s21(dB)"] = dip.f2.s21
 
-            # ---- frequency shift (only valid if baseline exists)
+            # ---- bandwidth & Q
+            bw = dip.bw()
+            q = dip.q()
+
+            row[f"{p}_bw(GHz)"] = bw
+            row[f"{p}_q"] = q
+            row[f"{p}_1/q"] = dip.inv_q()
+
+            # ------------------------------------------------
+            # Frequency shift & sensitivities
+            # ------------------------------------------------
             if sweep_param == "er":
-                base_f0 = baseline_f0[i] if baseline_f0 is not None else None
-                if base_f0 is not None:
-                    shift_MHz = frequency_shift_MHz(band, base_f0)
-                    row[f"{prefix}_Δf0(MHz)"] = shift_MHz
-                    row[f"{prefix}_|Δf0|(MHz)"] = abs(shift_MHz)
-                    
-                    er = r.config["er"]
-                    row[f"{prefix} Sensitivity (MHz/εr)"] = sensitivity(
-                        shift_MHz=shift_MHz,
-                        er=er,
-                        er_base=er_base,
-                        baseline_f0=base_f0,
-                        norm=False,
-                    )
-                    row[f"{prefix} Sensitivity norm (MHz/εr)"] = sensitivity(
-                        shift_MHz=shift_MHz,
-                        er=er,
-                        er_base=er_base,
-                        baseline_f0=base_f0,
-                        norm=True,
-                    )
-                else:
-                    shift_MHz = float("nan")
-                    row[f"{prefix}_Δf0(MHz)"] = float("nan")
-                    row[f"{prefix}_|Δf0|(MHz)"] = float("nan")
+                f0_base = baseline_f0[i]
 
-                    row[f"{prefix} Sensitivity (MHz/εr)"] = float("nan")
-                    row[f"{prefix} Sensitivity norm (MHz/εr)"] = float("nan")
+                df_MHz = frequency_shift_MHz(dip, f0_base)
+                row[f"{p}_f0-f0base(MHz)"] = df_MHz
+                row[f"{p}_|f0-f0base|(MHz)"] = abs(df_MHz)
+
+                er = r.config["er"]
+                delta_er = er - er_base
+
+                # ---- raw sensitivity (MHz / εr)
+                row[f"{p}_sen_norm"] = sensitivity(
+                    dip=dip,
+                    f0_base=f0_base,
+                    er=er,
+                    er_base=er_base,
+                )
+
+            else:
+                # ---- not applicable for other sweeps
+                row[f"{p}_f0-f0base(MHz)"] = float("nan")
+                row[f"{p}_|f0-f0base|(MHz)"] = float("nan")
+                row[f"{p}_sen_norm"] = float("nan")
 
         # ----------------------------------------------------
         # Inter-band spacing
         # ----------------------------------------------------
-        for i in range(len(bands) - 1):
-            row[f"window_band{i+1}–{i+2}(GHz)"] = window_size(
-                bands[i], bands[i + 1]
+        for i in range(len(dips) - 1):
+            row[f"window_band{i+1}_{i+2}_GHz"] = window_size(
+                dips[i], dips[i + 1]
             )
 
         # ----------------------------------------------------
-        # Preserve config
+        # Preserve ALL config parameters
         # ----------------------------------------------------
         for k, v in r.config.items():
             row[k] = v
 
         rows.append(row)
 
+    # --------------------------------------------------------
+    # Final DataFrame
+    # --------------------------------------------------------
     return (
         pd.DataFrame(rows)
         .sort_values(sweep_param)

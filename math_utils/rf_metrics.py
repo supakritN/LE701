@@ -2,7 +2,7 @@ from math_utils.signal_feature import Dip
 
 
 # ============================================================
-# RF metrics
+# RF metrics (LE701 reference)
 # ============================================================
 
 def window_size(dip1: Dip, dip2: Dip) -> float:
@@ -20,44 +20,20 @@ def frequency_shift_MHz(dip: Dip, f0_base: float) -> float:
 
 
 def sensitivity(
-    shift_MHz: float,
+    dip: Dip,
+    f0_base: float,
     er: float,
-    baseline_f0: float,
     er_base: float = 1.0,
-    norm: bool = True,
+    norm: bool = True
 ) -> float:
-    """
-    Baseline-referenced sensitivity.
 
-    Parameters
-    ----------
-    shift_MHz : float
-        Δf0 in MHz
-    er : float
-        Relative permittivity
-    baseline_f0 : float
-        Baseline resonance frequency f0 (GHz)
-    er_base : float, default 1.0
-        Baseline permittivity
-    norm : bool, default True
-        If True, normalize by baseline f0:
-            sen = sen / f0_base
-
-    Returns
-    -------
-    float
-        Sensitivity value (dimensionless), or NaN if undefined
-    """
     delta_er = er - er_base
     if delta_er == 0:
         return float("nan")
+    
+    sen = (abs(dip.f0.f - f0_base) / delta_er) * 100
 
-    # |Δf0| / (er − er_base)
-    sen = abs(shift_MHz) / delta_er
-
-    # normalization by baseline resonance frequency
     if norm:
-        sen = sen / baseline_f0
+        return sen / f0_base
 
-    # scale factor (Excel-compatible)
-    return sen * (100 / 1000)
+    return sen
