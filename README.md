@@ -72,7 +72,7 @@ source myenv/bin/activate
 pip install -r requirements.txt
 ```
 
-#### Windows
+#### Windows (PowerShell)
 
 ```powershell
 python -m venv myenv
@@ -127,6 +127,6 @@ Supakrit Nithikethkul
 - source code: https://github.com/supakritN/LE701
 - quick use: https://le701.nithiapp.in.th/ (Deploy on internet)
 
-# Report
+# Report (For more details on installation and user guide)
 
 - https://drive.google.com/drive/folders/1JPo9ACuPJ8ry_YXR2DzMrnSFU8iGWQwn?usp=sharing
