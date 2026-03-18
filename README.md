@@ -126,3 +126,7 @@ Supakrit Nithikethkul
 - installation guide: https://www.youtube.com/watch?v=6EfRpunKPk0
 - source code: https://github.com/supakritN/LE701
 - quick use: https://le701.nithiapp.in.th/ (Deploy on internet)
+
+# Report
+
+- https://drive.google.com/drive/folders/1JPo9ACuPJ8ry_YXR2DzMrnSFU8iGWQwn?usp=sharing
