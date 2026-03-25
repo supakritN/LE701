@@ -156,8 +156,8 @@ def extract_dips(
     data_points: List[Tuple[float, float]],
     threshold_db: float = 3.0,
     min_spacing: int = 5,
-    min_depth_db: float = 10.0,
-    min_slope_db: float = 0.5,
+    min_depth_db: float = 5.0,
+    min_slope_db: float = 0.01,
 ) -> List[Dip]:
     """
     Robust automatic multi-band dip extraction.
