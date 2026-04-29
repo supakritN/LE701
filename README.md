@@ -64,6 +64,10 @@ cd LE701
 
 ### Setup Environment
 
+```bash
+cd <path-of-downloaded-folder>
+```
+
 #### Mac / Linux
 
 ```bash
@@ -85,9 +89,14 @@ pip install -r requirements.txt
 
 ## ▶️ Run
 
+```bash
+cd <path-of-downloaded-folder>
+```
+
 #### Mac / Linux
 
 ```bash
+source myenv/bin/activate
 myenv/bin/streamlit run web_app.py \
   --server.port=8501 \
   --server.address=0.0.0.0
@@ -96,6 +105,7 @@ myenv/bin/streamlit run web_app.py \
 #### Windows
 
 ```bash
+.\myenv\Scripts\Activate.ps1
 .\myenv\Scripts\streamlit.exe run web_app.py \
   --server.port=8501 \
   --server.address=0.0.0.0
